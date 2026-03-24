@@ -26,10 +26,10 @@ import urllib.request
 from collections import defaultdict
 
 # ─── Data source URLs ───────────────────────────────────────────────────────
-# RePoE community fork (actively maintained for current PoE patches)
-REPOE_BASE = "https://raw.githubusercontent.com/lvlvllvlvllvlvl/RePoE/master/RePoE/data"
-REPOE_MODS_URL = f"{REPOE_BASE}/mods.min.json"
-REPOE_STAT_TRANSLATIONS_URL = f"{REPOE_BASE}/stat_translations.min.json"
+# RePoE community fork — served via gh-pages CDN (better caching than raw repo)
+# See https://repoe-fork.github.io/poe1.html for full file listing
+REPOE_MODS_URL = "https://repoe-fork.github.io/mods.min.json"
+REPOE_STAT_TRANSLATIONS_URL = "https://repoe-fork.github.io/stat_translations.min.json"
 
 # Official GGG trade API
 TRADE_STATS_URL = "https://www.pathofexile.com/api/trade/data/stats"
