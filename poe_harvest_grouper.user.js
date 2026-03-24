@@ -1,15 +1,17 @@
 // ==UserScript==
-// @name         PoE Trade Harvest Grouper
+// @name         Poetent
 // @namespace    https://github.com/ShaneIsley/poetent
-// @version      0.3.4
+// @version      0.3.5
 // @description  Detect harvest-swappable stats on pathofexile.com/trade and offer count-group replacements. Supports ele res + ele damage swaps.
 // @author       ShaneIsley
-// @match        https://www.pathofexile.com/trade/*
+// @match        https://www.pathofexile.com/trade*
 // @icon         https://www.google.com/s2/favicons?sz=64&domain=pathofexile.com
 // @run-at       document-start
 // @grant        GM_setValue
 // @grant        GM_getValue
+// @grant        GM_deleteValue
 // @grant        unsafeWindow
+// @connect      raw.githubusercontent.com
 // ==/UserScript==
 
 (function () {
@@ -232,6 +234,164 @@
             try {
                 GM_setValue(STATS_CACHE_KEY, JSON.stringify({ ts: Date.now(), data }));
             } catch (e) {}
+        },
+    };
+
+    // =========================================================================
+    // BRIDGE RESOLVER — fetches tier data from poe_trade_bridge.json
+    // Maps trade stat IDs → modifier tiers with min/max roll ranges
+    // =========================================================================
+    const BRIDGE_URL = 'https://raw.githubusercontent.com/ShaneIsley/poetent/main/data/poe_trade_bridge.json';
+    const BRIDGE_CACHE_KEY = 'poe_harvest_grouper_bridge_v1';
+    const BRIDGE_CACHE_HOURS = 24;
+
+    const BridgeResolver = {
+        data: null,  // { statId: { text, type, tiers: [{ tier_label, generation_type, min, max, ... }] } }
+        loaded: false,
+
+        async init() {
+            if (this.loaded) return;
+
+            const cached = this._loadCache();
+            if (cached) {
+                this.data = cached;
+                this.loaded = true;
+                Logger.info(`Bridge loaded from cache: ${Object.keys(this.data).length} stats`);
+                return;
+            }
+
+            try {
+                const resp = await fetch(BRIDGE_URL);
+                if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
+                this.data = await resp.json();
+                this._saveCache(this.data);
+                this.loaded = true;
+                Logger.info(`Bridge fetched: ${Object.keys(this.data).length} stats`);
+            } catch (e) {
+                Logger.error('Failed to fetch bridge data', e);
+            }
+        },
+
+        // Map PoE item class names to spawn weight tags
+        // (Item Class from clipboard → tag used in mods.json spawn_weights)
+        _classToTag: {
+            'rings': 'ring', 'amulets': 'amulet', 'belts': 'belt',
+            'gloves': 'gloves', 'boots': 'boots', 'helmets': 'helmet',
+            'body armours': 'body_armour', 'shields': 'shield',
+            'quivers': 'quiver', 'bows': 'bow', 'wands': 'wand',
+            'daggers': 'dagger', 'claws': 'claw', 'sceptres': 'sceptre',
+            'staves': 'staff', 'one hand swords': 'sword', 'two hand swords': 'sword',
+            'one hand axes': 'axe', 'two hand axes': 'axe',
+            'one hand maces': 'mace', 'two hand maces': 'mace',
+            'jewels': 'jewel', 'abyss jewels': 'abyss_jewel',
+            'flasks': 'flask', 'life flasks': 'flask', 'mana flasks': 'flask',
+        },
+
+        // Look up tier info for a stat ID and rolled value, filtered by item class
+        resolve(statId, value, itemClass) {
+            if (!this.data || !this.data[statId]) return null;
+            const entry = this.data[statId];
+            let tiers = entry.tiers || [];
+            if (!tiers.length) return null;
+
+            // Filter tiers to those that can spawn on this item type
+            if (itemClass) {
+                const tag = this._classToTag[(itemClass || '').toLowerCase()];
+                if (tag) {
+                    const filtered = tiers.filter(t =>
+                        !t.tags || t.tags.length === 0 || t.tags.includes(tag) || t.tags.includes('default')
+                    );
+                    if (filtered.length > 0) tiers = filtered;
+                }
+            }
+
+            // Find which tier the value falls into
+            let matched = null;
+            let matchedIdx = -1;
+            for (let i = 0; i < tiers.length; i++) {
+                const t = tiers[i];
+                const lo = Math.min(t.min, t.max);
+                const hi = Math.max(t.min, t.max);
+                if (value >= lo && value <= hi) {
+                    matched = t;
+                    matchedIdx = i;
+                    break;
+                }
+            }
+
+            // Fallback: closest tier if exact match not found
+            if (!matched && value !== undefined) {
+                let bestDist = Infinity;
+                tiers.forEach((t, i) => {
+                    const lo = Math.min(t.min, t.max);
+                    const hi = Math.max(t.min, t.max);
+                    const dist = value < lo ? lo - value : value > hi ? value - hi : 0;
+                    if (dist < bestDist) { bestDist = dist; matched = t; matchedIdx = i; }
+                });
+            }
+
+            if (!matched) return null;
+
+            // Collect all tiers of the same generation type (within filtered set)
+            const genType = matched.generation_type;
+            const genTiers = tiers.filter(t => t.generation_type === genType);
+            const genIndex = genTiers.indexOf(matched);
+
+            // Compute a local tier label: P1 = best available for this item type
+            const labelPrefix = genType === 'prefix' ? 'P' : genType === 'suffix' ? 'S' : 'T';
+            const localLabel = `${labelPrefix}${genIndex + 1}`;
+
+            return {
+                tierLabel: localLabel,
+                tierMin: Math.min(matched.min, matched.max),
+                tierMax: Math.max(matched.min, matched.max),
+                genType,
+                tierIndex: genIndex,
+                totalTiers: genTiers.length,
+                genTiers,
+            };
+        },
+
+        // Compute search min/max for a given tolerance (0=exact, 1=±1, 2=±2, Infinity=any)
+        computeRange(tierInfo, tolerance) {
+            if (!tierInfo) return { min: undefined, max: undefined };
+            if (tolerance === Infinity) return { min: undefined, max: undefined };
+
+            const { tierIndex, genTiers } = tierInfo;
+            const lo = Math.max(0, tierIndex - tolerance);
+            const hi = Math.min(genTiers.length - 1, tierIndex + tolerance);
+
+            // Tiers are sorted best→worst (highest values first), so:
+            // lo index = best tier in range (highest max)
+            // hi index = worst tier in range (lowest min)
+            let searchMin = Infinity, searchMax = -Infinity;
+            for (let i = lo; i <= hi; i++) {
+                const t = genTiers[i];
+                const tLo = Math.min(t.min, t.max);
+                const tHi = Math.max(t.min, t.max);
+                if (tLo < searchMin) searchMin = tLo;
+                if (tHi > searchMax) searchMax = tHi;
+            }
+
+            return { min: searchMin, max: undefined }; // Only set min — don't cap max (we want upgrades too)
+        },
+
+        _loadCache() {
+            try {
+                const raw = GM_getValue(BRIDGE_CACHE_KEY);
+                if (!raw) return null;
+                const obj = JSON.parse(raw);
+                if ((Date.now() - obj.ts) / 36e5 > BRIDGE_CACHE_HOURS) return null;
+                return obj.data;
+            } catch (e) { return null; }
+        },
+
+        _saveCache(data) {
+            try {
+                GM_setValue(BRIDGE_CACHE_KEY, JSON.stringify({ ts: Date.now(), data }));
+            } catch (e) {
+                Logger.warn('Failed to cache bridge data (may exceed GM storage limit)');
+            }
         },
     };
 
@@ -742,6 +902,10 @@
                     <input type="checkbox" id="hg-set-debug" data-hg-debug ${Settings.data.debug ? 'checked' : ''}>
                     <label for="hg-set-debug">Debug logging (F12)</label>
                 </div>
+                <div class="hg-set-row" style="justify-content:space-between;padding-top:6px">
+                    <span style="font-size:11px;color:#666" data-hg-cache-info>…</span>
+                    <button data-hg-clear-cache style="background:#6b2121;color:#f9a;border:1px solid #944;border-radius:3px;padding:2px 8px;font-size:10px;cursor:pointer;font-family:inherit">Clear caches</button>
+                </div>
             `;
 
             settingsEl.querySelector('[data-hg-save]').addEventListener('click', () => {
@@ -762,6 +926,32 @@
                     this.analyze(_lastPayload, _lastLeague || detectLeague());
                 }
             });
+
+            // Cache info display
+            const cacheInfo = settingsEl.querySelector('[data-hg-cache-info]');
+            const statsAge = this._cacheAge(STATS_CACHE_KEY);
+            const bridgeAge = this._cacheAge(BRIDGE_CACHE_KEY);
+            cacheInfo.textContent = `Stats: ${statsAge} · Bridge: ${bridgeAge}`;
+
+            // Clear cache button
+            settingsEl.querySelector('[data-hg-clear-cache]').addEventListener('click', () => {
+                GM_deleteValue(STATS_CACHE_KEY);
+                GM_deleteValue(BRIDGE_CACHE_KEY);
+                StatResolver.loaded = false;
+                BridgeResolver.loaded = false;
+                BridgeResolver.data = null;
+                cacheInfo.textContent = 'Cleared! Reload to refetch.';
+            });
+        },
+
+        _cacheAge(key) {
+            try {
+                const raw = GM_getValue(key);
+                if (!raw) return 'empty';
+                const obj = JSON.parse(raw);
+                const hours = ((Date.now() - obj.ts) / 36e5).toFixed(1);
+                return `${hours}h`;
+            } catch (e) { return 'error'; }
         },
 
         _applyUIMode() {
@@ -782,15 +972,15 @@
             }
         },
 
-        // ── Clipboard paste: parse PoE item text and submit a fresh trade search ──
+        // ── Clipboard paste: parse PoE item text and submit a trade search ──
         async _handleClipboardPaste() {
             const status = this.panel.querySelector('.hg-status');
 
-            // Expand panel if minimized so user sees status feedback
             if (this.minimized) {
                 this.minimized = false;
                 this.panel.classList.remove('hg-min');
             }
+            this.panel.classList.remove('hg-show-settings');
 
             let text;
             try {
