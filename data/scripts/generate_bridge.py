@@ -112,6 +112,60 @@ def build_bridge(mods, stat_translations, trade_stats):
     stat_to_mods = build_engine_stat_index(mods)
     text_to_engine = build_trade_stat_to_engine_map(stat_translations)
 
+    # ── DIAGNOSTIC: check critical stats at each stage ──
+    PROBE_STATS = {
+        "explicit.stat_3299347043": "+# to maximum Life",
+        "explicit.stat_328541901":  "+# to Intelligence",
+        "explicit.stat_1050105434": "+# to maximum Mana",
+    }
+    PROBE_ENGINE_IDS = {
+        "stat_3299347043": "Life",
+        "stat_328541901":  "Intelligence",
+        "stat_1050105434": "Mana",
+    }
+
+    print()
+    print("  ── DIAGNOSTIC: stat_to_mods (engine ID → mod tiers) ──")
+    for eid, label in PROBE_ENGINE_IDS.items():
+        entries = stat_to_mods.get(eid, [])
+        print(f"    {label} ({eid}): {len(entries)} mod entries")
+        if entries:
+            print(f"      first: {entries[0]['mod_key']} range={entries[0]['min']}-{entries[0]['max']} gen={entries[0]['generation_type']}")
+
+    print()
+    print("  ── DIAGNOSTIC: text_to_engine (normalized text → engine IDs) ──")
+    for ggg_id, expected_text in PROBE_STATS.items():
+        engine_ids = text_to_engine.get(expected_text, set())
+        print(f"    '{expected_text}': {len(engine_ids)} engine IDs → {engine_ids if engine_ids else 'EMPTY'}")
+
+    # Also check what RePoE actually produced for Life's raw string
+    print()
+    print("  ── DIAGNOSTIC: RePoE raw strings for Life stat ──")
+    for entry in stat_translations:
+        eids = entry.get("ids", [])
+        if "stat_3299347043" not in eids:
+            continue
+        for lang in entry.get("English", []):
+            raw = lang.get("string", "")
+            normalized_step1 = re.sub(r"\{(\d+):\+d\}", "+#", raw)
+            normalized_step2 = re.sub(r"\{\d+(?::[^}]*)?\}", "#", normalized_step1)
+            print(f"    raw: '{raw}'")
+            print(f"    after +# fix: '{normalized_step1}'")
+            print(f"    final: '{normalized_step2}'")
+        break
+    else:
+        print("    stat_3299347043 NOT FOUND in stat_translations")
+
+    # Also dump a few text_to_engine keys that contain "Life"
+    print()
+    print("  ── DIAGNOSTIC: text_to_engine keys containing 'Life' ──")
+    life_keys = [k for k in text_to_engine.keys() if "Life" in k][:5]
+    for k in life_keys:
+        print(f"    '{k}' → {text_to_engine[k]}")
+    if not life_keys:
+        print("    NONE FOUND")
+    print()
+
     bridge = {}
 
     # Walk every stat from the official trade API
@@ -139,6 +193,15 @@ def build_bridge(mods, stat_translations, trade_stats):
             if len(parts) == 2:
                 engine_ids.add(parts[1])
 
+            # Probe: trace the critical stats
+            if ggg_id in PROBE_STATS:
+                print(f"  ── PROBE {ggg_id} ('{text}') ──")
+                print(f"    text_to_engine match: {text_to_engine.get(text, 'MISS')}")
+                print(f"    direct engine ID: {parts[1] if len(parts) == 2 else 'N/A'}")
+                print(f"    combined engine_ids: {engine_ids}")
+                tier_count = sum(len(stat_to_mods.get(eid, [])) for eid in engine_ids)
+                print(f"    total tiers from engine IDs: {tier_count}")
+
             # Collect all mod tiers linked to these engine IDs
             for eid in engine_ids:
                 for m in stat_to_mods.get(eid, []):
@@ -149,7 +212,19 @@ def build_bridge(mods, stat_translations, trade_stats):
         stat["tiers"] = _refine_tiers(stat["tiers"])
 
     # Drop stats with no tiers (pseudo stats, boolean stats, etc.)
+    before_drop = len(bridge)
     bridge = {k: v for k, v in bridge.items() if v["tiers"]}
+    after_drop = len(bridge)
+
+    print()
+    print(f"  ── FINAL: {before_drop} total → {after_drop} with tiers ({before_drop - after_drop} dropped) ──")
+    for ggg_id, label in PROBE_STATS.items():
+        entry = bridge.get(ggg_id)
+        if entry:
+            print(f"    ✓ {label} ({ggg_id}): {len(entry['tiers'])} tiers")
+        else:
+            print(f"    ✗ {label} ({ggg_id}): MISSING from final bridge")
+    print()
 
     return bridge
 
