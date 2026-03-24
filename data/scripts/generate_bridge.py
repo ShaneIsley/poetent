@@ -126,6 +126,10 @@ def build_bridge(mods, stat_translations, trade_stats):
 
     print()
     print("  ── DIAGNOSTIC: stat_to_mods (engine ID → mod tiers) ──")
+    # Show sample keys to reveal the ID format
+    sample_keys = list(stat_to_mods.keys())[:5]
+    print(f"    First 5 keys: {sample_keys}")
+    print(f"    Total keys: {len(stat_to_mods)}")
     for eid, label in PROBE_ENGINE_IDS.items():
         entries = stat_to_mods.get(eid, [])
         print(f"    {label} ({eid}): {len(entries)} mod entries")
@@ -134,6 +138,11 @@ def build_bridge(mods, stat_translations, trade_stats):
 
     print()
     print("  ── DIAGNOSTIC: text_to_engine (normalized text → engine IDs) ──")
+    # Show sample keys and values to reveal the format
+    sample_te = list(text_to_engine.items())[:3]
+    print(f"    Total keys: {len(text_to_engine)}")
+    for k, v in sample_te:
+        print(f"    sample: '{k}' → {v}")
     for ggg_id, expected_text in PROBE_STATS.items():
         engine_ids = text_to_engine.get(expected_text, set())
         print(f"    '{expected_text}': {len(engine_ids)} engine IDs → {engine_ids if engine_ids else 'EMPTY'}")
@@ -155,6 +164,62 @@ def build_bridge(mods, stat_translations, trade_stats):
         break
     else:
         print("    stat_3299347043 NOT FOUND in stat_translations")
+
+    # Search by descriptive ID patterns (RePoE uses names like base_maximum_life)
+    print()
+    print("  ── DIAGNOSTIC: RePoE stat_translations entries mentioning 'life' ──")
+    life_count = 0
+    for entry in stat_translations:
+        eids = entry.get("ids", [])
+        life_ids = [eid for eid in eids if "life" in eid.lower() or "maximum_life" in eid.lower()]
+        if not life_ids:
+            continue
+        for lang in entry.get("English", []):
+            raw = lang.get("string", "")
+            if "maximum Life" in raw or "maximum life" in raw.lower():
+                print(f"    ids={life_ids} raw='{raw}'")
+                life_count += 1
+                if life_count >= 3:
+                    break
+        if life_count >= 3:
+            break
+    if life_count == 0:
+        print("    NONE FOUND")
+
+    # Check mods.json for life mods
+    print()
+    print("  ── DIAGNOSTIC: mods.json entries with 'life' in stat IDs ──")
+    life_mod_count = 0
+    for mod_key, mod_data in mods.items():
+        if mod_data.get("domain") != "item":
+            continue
+        for stat in mod_data.get("stats", []):
+            sid = stat.get("id", "")
+            if "maximum_life" in sid.lower() or sid == "stat_3299347043":
+                print(f"    mod={mod_key} stat_id='{sid}' range={stat.get('min')}-{stat.get('max')} gen={mod_data.get('generation_type')}")
+                life_mod_count += 1
+                if life_mod_count >= 5:
+                    break
+        if life_mod_count >= 5:
+            break
+    if life_mod_count == 0:
+        print("    NONE FOUND")
+
+    # Dump first 3 entries of stat_translations to see the format
+    print()
+    print("  ── DIAGNOSTIC: first 3 stat_translations entries ──")
+    for i, entry in enumerate(stat_translations[:3]):
+        print(f"    [{i}] ids={entry.get('ids', [])} English strings: {[l.get('string','') for l in entry.get('English', [])[:2]]}")
+
+    # Dump first mod from mods.json to see stat ID format
+    print()
+    print("  ── DIAGNOSTIC: first item-domain mod with stats ──")
+    for mod_key, mod_data in mods.items():
+        if mod_data.get("domain") != "item" or not mod_data.get("stats"):
+            continue
+        stats = mod_data["stats"][:2]
+        print(f"    mod={mod_key} gen={mod_data.get('generation_type')} stats={[{'id': s.get('id'), 'min': s.get('min'), 'max': s.get('max')} for s in stats]}")
+        break
 
     # Also dump a few text_to_engine keys that contain "Life"
     print()
