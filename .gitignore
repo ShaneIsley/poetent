@@ -1,0 +1,21 @@
+# Python
+__pycache__/
+*.pyc
+*.pyo
+.venv/
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Editor
+*.swp
+*.swo
+*~
+.idea/
+.vscode/
+
+# Temp data (downloaded during generation, not committed)
+data/scripts/*.json
+!data/poe_trade_bridge.json
+!data/poe_trade_bridge.pretty.json
