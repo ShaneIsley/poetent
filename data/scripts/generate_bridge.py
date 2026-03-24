@@ -96,12 +96,28 @@ def build_trade_stat_to_engine_map(stat_translations):
             raw = lang_entry.get("string", "")
             if not raw:
                 continue
-            # Normalize RePoE placeholders to match trade API format:
-            #   {0:+d} → +#  (signed display — trade API bakes the + into the template)
-            #   {0}    → #   (unsigned display)
-            #   {1:d}  → #   (explicit integer, no sign)
-            normalized = re.sub(r"\{(\d+):\+d\}", "+#", raw)
-            normalized = re.sub(r"\{\d+(?::[^}]*)?\}", "#", normalized)
+            # The format field tells us how each placeholder is displayed.
+            # e.g. format=["+#"] means {0} should become "+#" (signed display)
+            # e.g. format=["#"] or absent means {0} should become "#"
+            formats = lang_entry.get("format", [])
+
+            # Replace placeholders with format-aware # tokens
+            normalized = raw
+            # Process in reverse order so indices don't shift
+            for i in range(9, -1, -1):
+                placeholder = f"{{{i}}}"
+                if placeholder not in normalized:
+                    # Also check for {0:+d}, {0:d} style (older RePoE versions)
+                    for pattern in [f"{{{i}:+d}}", f"{{{i}:d}}"]:
+                        if pattern in normalized:
+                            replacement = "+#" if ":+d" in pattern else "#"
+                            normalized = normalized.replace(pattern, replacement)
+                    continue
+                # Use format field if available for this index
+                fmt = formats[i] if i < len(formats) else None
+                replacement = "+#" if fmt == "+#" else "#"
+                normalized = normalized.replace(placeholder, replacement)
+
             for eid in engine_ids:
                 text_to_engine[normalized].add(eid)
     return text_to_engine
