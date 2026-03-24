@@ -48,12 +48,17 @@ def fetch_json(url, label):
 def build_engine_stat_index(mods):
     """Index RePoE mods by their engine stat IDs.
 
-    Returns: { engine_stat_id: [ { mod_key, name, required_level, generation_type, min, max }, ... ] }
+    Returns: { engine_stat_id: [ { mod_key, name, required_level, generation_type, min, max, tags }, ... ] }
     """
     stat_to_mods = defaultdict(list)
     for mod_key, mod_data in mods.items():
         if mod_data.get("domain") != "item":
             continue
+
+        # Extract spawn tags — only item types where weight > 0
+        tags = [sw["tag"] for sw in mod_data.get("spawn_weights", [])
+                if sw.get("weight", 0) > 0]
+
         for stat in mod_data.get("stats", []):
             stat_id = stat.get("id")
             if not stat_id:
@@ -65,6 +70,7 @@ def build_engine_stat_index(mods):
                 "generation_type": mod_data.get("generation_type", ""),
                 "min": stat.get("min"),
                 "max": stat.get("max"),
+                "tags": tags,
             })
     return stat_to_mods
 
@@ -90,10 +96,12 @@ def build_trade_stat_to_engine_map(stat_translations):
             raw = lang_entry.get("string", "")
             if not raw:
                 continue
-            # Normalize RePoE placeholders {0}, {1} etc. to #
-            normalized = re.sub(r"\{[\d:+d]+\}", "#", raw)
-            # Also handle {0:+d} style (signed display)
-            normalized = re.sub(r"\{[^}]+\}", "#", normalized)
+            # Normalize RePoE placeholders to match trade API format:
+            #   {0:+d} → +#  (signed display — trade API bakes the + into the template)
+            #   {0}    → #   (unsigned display)
+            #   {1:d}  → #   (explicit integer, no sign)
+            normalized = re.sub(r"\{(\d+):\+d\}", "+#", raw)
+            normalized = re.sub(r"\{\d+(?::[^}]*)?\}", "#", normalized)
             for eid in engine_ids:
                 text_to_engine[normalized].add(eid)
     return text_to_engine
@@ -147,7 +155,7 @@ def build_bridge(mods, stat_translations, trade_stats):
 
 
 def _refine_tiers(tiers):
-    """Sort, deduplicate, and assign tier labels."""
+    """Sort, deduplicate, assign tier labels, and merge spawn tags."""
     GEN_PRIORITY = {"prefix": 0, "suffix": 1}
 
     # Sort: prefix first, then suffix, then others; within each group by max descending
@@ -156,16 +164,21 @@ def _refine_tiers(tiers):
         -(t["max"] or 0),
     ))
 
-    # Dedup and label
+    # Dedup and label — merge tags from duplicate entries
     gen_counts = {}
     unique = []
-    seen = set()
+    seen = {}  # dedup_key → index in unique[]
 
     for tier in tiers:
         dedup_key = (tier["name"], tier["min"], tier["max"], tier["generation_type"])
+
         if dedup_key in seen:
+            # Merge tags into existing entry
+            existing = unique[seen[dedup_key]]
+            existing_tags = set(existing.get("tags", []))
+            existing_tags.update(tier.get("tags", []))
+            existing["tags"] = sorted(existing_tags)
             continue
-        seen.add(dedup_key)
 
         gen = tier["generation_type"]
         mkey = (tier["mod_key"] or "").lower()
@@ -189,6 +202,10 @@ def _refine_tiers(tiers):
             gen_counts[gen] = gen_counts.get(gen, 0) + 1
             tier["tier_label"] = f"{prefix}{gen_counts[gen]}"
 
+        # Ensure tags is a sorted list
+        tier["tags"] = sorted(set(tier.get("tags", [])))
+
+        seen[dedup_key] = len(unique)
         unique.append(tier)
 
     return unique
