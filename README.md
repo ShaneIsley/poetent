@@ -1,3 +1,7 @@
+<p align="center">
+  <img src="potent_logo_opt.png" width="320" />
+</p>
+
 # poetent
 
 Trade site enhancer for Path of Exile. Runs on pathofexile.com/trade.
