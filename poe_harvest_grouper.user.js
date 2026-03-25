@@ -123,7 +123,7 @@
                 this._index(data);
                 this.loaded = true;
             } catch (e) {
-                console.error('[HarvestGrouper] Failed to fetch stats', e);
+                console.error('[Poetent] Failed to fetch stats', e);
             }
         },
 
@@ -876,7 +876,7 @@
             this.panel.innerHTML = `
                 <div class="hg-header">
                     <span class="hg-title">
-                        🌿 Harvest Grouper
+                        🌿 Poetent
                         <span class="hg-badge hg-zero" data-hg-badge>0</span>
                     </span>
                     <span class="hg-header-btns">
@@ -902,7 +902,7 @@
             this.bar.innerHTML = `
                 <div class="hg-bar-header">
                     <span class="hg-bar-htitle">
-                        🌿 Harvest Grouper
+                        🌿 Poetent
                         <span class="hg-badge hg-zero" data-hg-bar-badge>0</span>
                     </span>
                     <span class="hg-bar-hbtns">
