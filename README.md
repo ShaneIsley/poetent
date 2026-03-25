@@ -1,6 +1,6 @@
 # poetent
 
-Trade tools for Path of Exile.
+Enhancers for pathofexile.com/trade
 
 ## Contents
 
