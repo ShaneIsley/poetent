@@ -4,8 +4,8 @@ Trade tools for Path of Exile.
 
 ## Contents
 
-### `userscript/` — PoE Trade Harvest Grouper
-A userscript that runs on `pathofexile.com/trade`. Detects stat filters that can be harvest-swapped between elemental variants and offers one-click count-group replacements. Also supports clipboard item pasting for quick trade searches.
+### Poetent 
+Paste items from PoE to instantly search trade. Auto-detects harvest-swappable elemental stats and offers one-click count-group broadening. Pseudo stat uplift and defensive bundles. Some pseudo tricks.
 
 **Install:** Open `userscript/poetent.user.js` raw in your browser with Tampermonkey installed.
 
