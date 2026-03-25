@@ -2,7 +2,7 @@
 
 Trade site enhancer for Path of Exile. Runs on pathofexile.com/trade.
 
-**Install:** Open [poetent.user.js]([./userscript/poetent.user.js](https://github.com/ShaneIsley/poetent/raw/refs/heads/main/userscript/poetent.user.js)) in your browser with [Violentmonkey](https://violentmonkey.github.io/), or similar, installed.
+**Install:** Open [poetent.user.js](https://github.com/ShaneIsley/poetent/raw/refs/heads/main/userscript/poetent.user.js) in your browser with [Violentmonkey](https://violentmonkey.github.io/), or similar, installed.
 
 ## Features
 
