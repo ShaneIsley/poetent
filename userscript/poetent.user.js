@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Poetent
 // @namespace    https://github.com/ShaneIsley/poetent
-// @version      0.4.0
+// @version      0.4.1
 // @description  Paste items from PoE to instantly search trade. Auto-detects harvest-swappable elemental stats and offers one-click count-group broadening. Pseudo stat uplift and defensive bundles.
 // @author       ShaneIsley
 // @match        https://www.pathofexile.com/trade/*
@@ -1771,6 +1771,10 @@
                     const meta = StatResolver.idToMeta.get(filter.id);
                     if (!meta) return;
 
+                    // Skip filters that are already pseudo stats (prevents feedback loop
+                    // where an applied pseudo filter gets re-detected as swappable)
+                    if (meta.type === 'pseudo') return;
+
                     // Check: does this stat contribute to this pseudo?
                     if (!rule.match(meta.text)) return;
                     if (rule.exclude && rule.exclude(meta.text)) return;
@@ -1949,14 +1953,13 @@
                 });
             });
 
-            // Add pseudo filters into the first "and" group (or create one)
+            // Add pseudo filters in a new AND group (keeps them separate from the user's original filters)
             if (pseudoFiltersToAdd.length > 0) {
-                let andGroup = (payload.query.stats || []).find(sg => sg.type === 'and');
-                if (!andGroup) {
-                    andGroup = { type: 'and', disabled: false, filters: [] };
-                    payload.query.stats.push(andGroup);
-                }
-                pseudoFiltersToAdd.forEach(f => andGroup.filters.push(f));
+                payload.query.stats.push({
+                    type: 'and',
+                    disabled: false,
+                    filters: pseudoFiltersToAdd,
+                });
             }
 
             return payload;
