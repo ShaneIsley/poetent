@@ -1,8 +1,8 @@
 // ==UserScript==
 // @name         Poetent
 // @namespace    https://github.com/ShaneIsley/poetent
-// @version      0.4.1
-// @description  Paste items from PoE to instantly search trade. Auto-detects harvest-swappable elemental stats and offers one-click count-group broadening. Pseudo stat uplift and defensive bundles.
+// @version      0.4.2
+// @description  Paste items from PoE to instantly search trade. Auto-detects harvest-swappable elemental stats and offers one-click count-group broadening. Pseudo stat uplift and defensive bundles. Foulborn mutation support.
 // @author       ShaneIsley
 // @match        https://www.pathofexile.com/trade/*
 // @icon         https://www.google.com/s2/favicons?sz=64&domain=pathofexile.com
@@ -640,6 +640,7 @@
             let corrupted = false;
             let fractured = false;
             let synthesised = false;
+            let mutated = false;
 
             const skipRx = /^(Requirements:|Item Level:|Sockets:|Quality|Level:|Note:|Unmodifiable)/;
             // Property lines — these are base item stats, not mods
@@ -677,6 +678,7 @@
                 if (first === 'Corrupted') { corrupted = true; continue; }
                 if (first === 'Fractured Item') { fractured = true; continue; }
                 if (first === 'Synthesised Item') { synthesised = true; continue; }
+                if (first === 'Mutated') { mutated = true; continue; }
                 if (first === 'Mirrored') continue;
                 if (first.startsWith('Note:')) continue;
 
@@ -699,10 +701,11 @@
                 for (const line of mergedLines) {
                     const trimmed = line.trim();
                     if (!trimmed || trimmed.startsWith('Note:')) continue;
-                    if (trimmed === 'Corrupted' || trimmed === 'Fractured Item' || trimmed === 'Synthesised Item') {
+                    if (trimmed === 'Corrupted' || trimmed === 'Fractured Item' || trimmed === 'Synthesised Item' || trimmed === 'Mutated') {
                         if (trimmed === 'Corrupted') corrupted = true;
                         if (trimmed === 'Fractured Item') fractured = true;
                         if (trimmed === 'Synthesised Item') synthesised = true;
+                        if (trimmed === 'Mutated') mutated = true;
                         continue;
                     }
 
@@ -733,7 +736,7 @@
 
             if (!baseType && !name) return null;
 
-            return { rarity, name, baseType, itemClass, mods, ilvl, corrupted, fractured, synthesised };
+            return { rarity, name, baseType, itemClass, mods, ilvl, corrupted, fractured, synthesised, mutated };
         },
     };
 
@@ -896,6 +899,7 @@
                         ${item.corrupted ? ' · <span style="color:#d44">Corrupted</span>' : ''}
                         ${item.fractured ? ' · <span style="color:#a16207">Fractured</span>' : ''}
                         ${item.synthesised ? ' · <span style="color:#6d28d9">Synthesised</span>' : ''}
+                        ${item.mutated ? ' · <span style="color:#7fcc5a">Mutated</span>' : ''}
                     </div>
                 </div>
             `;
@@ -1074,7 +1078,12 @@
             };
 
             if (item.rarity === 'Unique' && item.name) {
-                payload.query.name = item.name;
+                // Foulborn (mutated) uniques: trade API only recognises the original name
+                let tradeName = item.name;
+                if (item.mutated && tradeName.startsWith('Foulborn ')) {
+                    tradeName = tradeName.substring('Foulborn '.length);
+                }
+                payload.query.name = tradeName;
             }
 
             const misc = {};
@@ -1123,7 +1132,11 @@
             };
 
             if (item.rarity === 'Unique' && item.name) {
-                payload.query.name = item.name;
+                let tradeName = item.name;
+                if (item.mutated && tradeName.startsWith('Foulborn ')) {
+                    tradeName = tradeName.substring('Foulborn '.length);
+                }
+                payload.query.name = tradeName;
             }
 
             await this._submitPayload(payload, league, bundleBtn, '🎯 Search Defensive Bundle');
