@@ -1693,46 +1693,49 @@
             this.pseudoSuggestions = [];
             const claimed = new Set();
             const statGroups = payload?.query?.stats || [];
+            const isUnique = !!payload?.query?.name;
 
-            // ── Harvest swap detection (unchanged) ──
-            statGroups.forEach(sg => {
-                if (sg.type !== 'and') return;
-                (sg.filters || []).forEach(filter => {
-                    if (filter.disabled || claimed.has(filter.id)) return;
-                    const info = StatResolver.getSwapInfo(filter.id);
-                    if (!info) return;
-                    const andFiltersFlat = [];
-                    statGroups.forEach(g => { if (g.type === 'and') (g.filters || []).forEach(f => andFiltersFlat.push(f)); });
-                    const detected = [];
-                    info.siblings.forEach(sib => {
-                        const existing = andFiltersFlat.find(f => f.id === sib.id && !f.disabled);
-                        if (existing) {
-                            detected.push({ ...sib, min: existing.value?.min, max: existing.value?.max });
-                            claimed.add(sib.id);
-                        }
-                    });
-                    this.suggestions.push({
-                        swap: info.swap,
-                        templateKey: info.templateKey,
-                        templateDisplay: info.templateKey.split('|')[1].replace('{{ELE}}', '⟨element⟩'),
-                        detected, allSiblings: info.siblings,
-                        suggestedMin: Math.max(...detected.map(d => d.min || 0)),
-                        suggestedCount: 1,
+            // ── Harvest swap detection — skip for unique items (can't harvest-craft uniques) ──
+            if (!isUnique) {
+                statGroups.forEach(sg => {
+                    if (sg.type !== 'and') return;
+                    (sg.filters || []).forEach(filter => {
+                        if (filter.disabled || claimed.has(filter.id)) return;
+                        const info = StatResolver.getSwapInfo(filter.id);
+                        if (!info) return;
+                        const andFiltersFlat = [];
+                        statGroups.forEach(g => { if (g.type === 'and') (g.filters || []).forEach(f => andFiltersFlat.push(f)); });
+                        const detected = [];
+                        info.siblings.forEach(sib => {
+                            const existing = andFiltersFlat.find(f => f.id === sib.id && !f.disabled);
+                            if (existing) {
+                                detected.push({ ...sib, min: existing.value?.min, max: existing.value?.max });
+                                claimed.add(sib.id);
+                            }
+                        });
+                        this.suggestions.push({
+                            swap: info.swap,
+                            templateKey: info.templateKey,
+                            templateDisplay: info.templateKey.split('|')[1].replace('{{ELE}}', '⟨element⟩'),
+                            detected, allSiblings: info.siblings,
+                            suggestedMin: Math.max(...detected.map(d => d.min || 0)),
+                            suggestedCount: 1,
+                        });
                     });
                 });
-            });
 
-            const bestBySwap = new Map();
-            this.suggestions.forEach(sug => {
-                const existing = bestBySwap.get(sug.swap.id);
-                if (!existing || sug.detected.length > existing.detected.length ||
-                    (sug.detected.length === existing.detected.length && sug.templateDisplay.length < existing.templateDisplay.length)) {
-                    bestBySwap.set(sug.swap.id, sug);
-                }
-            });
-            this.suggestions = Array.from(bestBySwap.values()).filter(s => Settings.isGroupEnabled(s.swap.id));
+                const bestBySwap = new Map();
+                this.suggestions.forEach(sug => {
+                    const existing = bestBySwap.get(sug.swap.id);
+                    if (!existing || sug.detected.length > existing.detected.length ||
+                        (sug.detected.length === existing.detected.length && sug.templateDisplay.length < existing.templateDisplay.length)) {
+                        bestBySwap.set(sug.swap.id, sug);
+                    }
+                });
+                this.suggestions = Array.from(bestBySwap.values()).filter(s => Settings.isGroupEnabled(s.swap.id));
+            }
 
-            // ── Pseudo uplift detection ──
+            // ── Pseudo uplift detection (works for all item rarities including uniques) ──
             if (Settings.data.pseudoUplift || Settings.data.pseudoBroaden) {
                 this._detectPseudos(statGroups);
             }
