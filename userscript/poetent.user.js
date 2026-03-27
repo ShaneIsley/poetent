@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Poetent
 // @namespace    https://github.com/ShaneIsley/poetent
-// @version      0.6.0
+// @version      0.6.1
 // @description  Paste items from PoE to instantly search trade. Auto-detects harvest-swappable elemental stats and offers one-click count-group broadening. Pseudo stat uplift and defensive bundles. Foulborn mutation support.
 // @author       ShaneIsley
 // @match        https://www.pathofexile.com/trade/*
@@ -1119,12 +1119,32 @@
         _buildDisabledFilters(item) {
             const filters = {};
 
-            // ── Type filters (rarity) ──
+            // ── Type filters (rarity + category) ──
+            const CATEGORY_MAP = {
+                'Gloves':'armour.gloves', 'Boots':'armour.boots', 'Body Armours':'armour.chest',
+                'Helmets':'armour.helmet', 'Shields':'armour.shield', 'Quivers':'armour.quiver',
+                'Bows':'weapon.bow', 'Claws':'weapon.claw', 'Daggers':'weapon.dagger',
+                'One Hand Axes':'weapon.oneaxe', 'One Hand Maces':'weapon.onemace',
+                'One Hand Swords':'weapon.onesword', 'Sceptres':'weapon.sceptre',
+                'Staves':'weapon.staff', 'Thrusting One Hand Swords':'weapon.onesword',
+                'Two Hand Axes':'weapon.twoaxe', 'Two Hand Maces':'weapon.twomace',
+                'Two Hand Swords':'weapon.twosword', 'Wands':'weapon.wand',
+                'Warstaves':'weapon.warstaff', 'Rune Daggers':'weapon.runedagger',
+                'Rings':'accessory.ring', 'Amulets':'accessory.amulet', 'Belts':'accessory.belt',
+                'Trinkets':'accessory.trinket',
+                'Flasks':'flask', 'Life Flasks':'flask', 'Mana Flasks':'flask', 'Utility Flasks':'flask',
+                'Jewels':'jewel', 'Abyss Jewels':'jewel.abyss', 'Cluster Jewels':'jewel.cluster',
+                'Maps':'map', 'Map Fragments':'map.fragment',
+                'Skill Gems':'gem.activegem', 'Support Skill Gems':'gem.supportgem',
+            };
             const typeF = {};
             if (item.rarity === 'Unique')      typeF.rarity = { option: 'unique' };
             else if (item.rarity === 'Rare')   typeF.rarity = { option: 'nonunique' };
             else if (item.rarity === 'Magic')  typeF.rarity = { option: 'magic' };
             else if (item.rarity === 'Normal') typeF.rarity = { option: 'normal' };
+            if (item.itemClass && CATEGORY_MAP[item.itemClass]) {
+                typeF.category = { option: CATEGORY_MAP[item.itemClass] };
+            }
             if (Object.keys(typeF).length) filters.type_filters = { disabled: true, filters: typeF };
 
             // ── Misc filters (boolean flags, ilvl, quality, gem level) ──
