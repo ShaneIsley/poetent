@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Poetent
 // @namespace    https://github.com/ShaneIsley/poetent
-// @version      0.5.1
+// @version      0.5.2
 // @description  Paste items from PoE to instantly search trade. Auto-detects harvest-swappable elemental stats and offers one-click count-group broadening. Pseudo stat uplift and defensive bundles. Foulborn mutation support.
 // @author       ShaneIsley
 // @match        https://www.pathofexile.com/trade/*
@@ -568,9 +568,15 @@
             let mirrored = false;
             const influences = [];
 
-            const skipRx = /^(Requirements:|Item Level:|Sockets:|Quality|Level:|Note:|Unmodifiable)/;
+            // Parsed properties (for search filters, not stat matching)
+            let quality = 0;
+            let links = 0;
+            let gemLevel = 0;
+            let mapTier = 0;
+
+            const skipRx = /^(Requirements:|Item Level:|Note:|Unmodifiable)/;
             // Property lines — these are base item stats, not mods
-            const propRx = /^(Armour|Evasion Rating|Evasion|Energy Shield|Physical Damage|Elemental Damage|Attacks per Second|Critical Strike Chance|Critical Strike|Weapon Range|Charm Slots|Ward|Chance to Block|Block Chance|Spirit|Reload Time|Mana Cost|Cooldown Time|Cast Time|Damage|Duration|Stack Size|Map Tier):/;
+            const propRx = /^(Armour|Evasion Rating|Evasion|Energy Shield|Physical Damage|Elemental Damage|Attacks per Second|Critical Strike Chance|Critical Strike|Weapon Range|Charm Slots|Ward|Chance to Block|Block Chance|Spirit|Reload Time|Mana Cost|Cooldown Time|Cast Time|Damage|Duration|Stack Size|Map Tier|Quality|Level|Sockets):/;
 
             // Flavor text detection: sections with no numbers and no stat-like content
             const isFlavorText = (lines) => {
@@ -594,6 +600,25 @@
                     ilvl = parseInt(first.split(':')[1]) || 0;
                     continue;
                 }
+
+                // Extract property values from any section (before skip checks)
+                lines.forEach(l => {
+                    const t = l.trim();
+                    if (t.startsWith('Quality:'))  quality  = parseInt(t.replace(/[^0-9]/g, '')) || 0;
+                    if (t.startsWith('Level:') && !t.startsWith('Level Requirement')) gemLevel = parseInt(t.split(':')[1]) || 0;
+                    if (t.startsWith('Map Tier:')) mapTier  = parseInt(t.split(':')[1]) || 0;
+                    if (t.startsWith('Sockets:')) {
+                        // Parse link groups: "B-B-R G" → groups of linked sockets
+                        const socketStr = t.split(':')[1].trim();
+                        const groups = socketStr.split(/\s+/);
+                        let maxGroup = 0;
+                        groups.forEach(g => {
+                            const count = g.split('-').length;
+                            if (count > maxGroup) maxGroup = count;
+                        });
+                        links = maxGroup;
+                    }
+                });
 
                 // Skip non-mod sections
                 if (skipRx.test(first)) continue;
@@ -674,7 +699,7 @@
             // Replica uniques: game client shows "Replica <Name>" with no separate flag
             const replica = (rarity === 'Unique' && name.startsWith('Replica '));
 
-            return { rarity, name, baseType, itemClass, mods, ilvl, corrupted, fractured, synthesised, mutated, mirrored, replica, influences };
+            return { rarity, name, baseType, itemClass, mods, ilvl, corrupted, fractured, synthesised, mutated, mirrored, replica, influences, quality, links, gemLevel, mapTier };
         },
     };
 
@@ -839,12 +864,12 @@
                 </div>
             `;
 
-            // ── Search filters (detected metadata, toggleable) ──
+            // ── Search filters (detected metadata, all OFF by default — user opts in to constrain) ──
             const filters = [];
-            if (item.corrupted)   filters.push({ key:'corrupted',   label:'Corrupted',   color:'#d44',    on:true  });
-            if (item.fractured)   filters.push({ key:'fractured',   label:'Fractured',   color:'#a16207', on:true  });
-            if (item.synthesised) filters.push({ key:'synthesised', label:'Synthesised', color:'#6d28d9', on:true  });
-            if (item.replica)     filters.push({ key:'replica',     label:'Replica',     color:'#0ea5e9', on:true  });
+            if (item.corrupted)   filters.push({ key:'corrupted',   label:'Corrupted',   color:'#d44',    on:false });
+            if (item.fractured)   filters.push({ key:'fractured',   label:'Fractured',   color:'#a16207', on:false });
+            if (item.synthesised) filters.push({ key:'synthesised', label:'Synthesised', color:'#6d28d9', on:false });
+            if (item.replica)     filters.push({ key:'replica',     label:'Replica',     color:'#0ea5e9', on:false });
             if (item.mirrored)    filters.push({ key:'mirrored',    label:'Mirrored',    color:'#4338ca', on:false });
             if (item.mutated)     filters.push({ key:'mutated',     label:'Mutated',     color:'#7fcc5a', on:false, info:true });
             if (item.ilvl > 0 && item.rarity !== 'Unique')
@@ -853,6 +878,15 @@
                 const name = inf.charAt(0).toUpperCase() + inf.slice(1);
                 filters.push({ key:inf, label:name, color:'#6ba3d6', on:false });
             });
+            // Property-based filters
+            if (item.quality > 0)
+                filters.push({ key:'quality', label:`Quality ≥ ${item.quality}%`, color:'#aaa', on:false, val:item.quality });
+            if (item.links >= 5)
+                filters.push({ key:'links', label:`${item.links}L`, color:'#065f46', on:false, val:item.links });
+            if (item.gemLevel > 0)
+                filters.push({ key:'gem_level', label:`Gem Lvl ≥ ${item.gemLevel}`, color:'#1ba29b', on:false, val:item.gemLevel });
+            if (item.mapTier > 0)
+                filters.push({ key:'map_tier', label:`Tier ${item.mapTier}`, color:'#c8c8c8', on:false, val:item.mapTier });
 
             if (filters.length > 0) {
                 html += '<div class="ps-filter-section"><div class="ps-filter-header">Search Filters</div><div class="ps-filter-list">';
@@ -1050,11 +1084,11 @@
                 payload.query.name = tradeName;
             }
 
-            // Build misc_filters from checked filter checkboxes
-            const misc = this._buildMiscFilters();
-            if (Object.keys(misc).length) {
-                payload.query.filters.misc_filters = { filters: misc };
-            }
+            // Build filters from checked checkboxes
+            const { misc, socket, map } = this._buildCheckedFilters();
+            if (Object.keys(misc).length)   payload.query.filters.misc_filters   = { filters: misc };
+            if (Object.keys(socket).length) payload.query.filters.socket_filters = { filters: socket };
+            if (Object.keys(map).length)    payload.query.filters.map_filters    = { filters: map };
 
             await this._submitPayload(payload, league, searchBtn, '🔍 Search Trade');
         },
@@ -1101,17 +1135,17 @@
                 payload.query.name = tradeName;
             }
 
-            const misc = this._buildMiscFilters();
-            if (Object.keys(misc).length) {
-                payload.query.filters.misc_filters = { filters: misc };
-            }
+            const { misc, socket, map } = this._buildCheckedFilters();
+            if (Object.keys(misc).length)   payload.query.filters.misc_filters   = { filters: misc };
+            if (Object.keys(socket).length) payload.query.filters.socket_filters = { filters: socket };
+            if (Object.keys(map).length)    payload.query.filters.map_filters    = { filters: map };
 
             await this._submitPayload(payload, league, bundleBtn, '🎯 Search Defensive Bundle');
         },
 
-        // Read checked filter checkboxes from the paste modal and build misc_filters object
-        _buildMiscFilters() {
-            const FILTER_API_MAP = {
+        // Read checked filter checkboxes from the paste modal and build filter objects for the payload
+        _buildCheckedFilters() {
+            const MISC_MAP = {
                 corrupted:   'corrupted',
                 fractured:   'fractured_item',
                 synthesised: 'synthesised_item',
@@ -1125,18 +1159,23 @@
                 warlord:     'warlord_item',
             };
             const misc = {};
-            if (!this.overlay) return misc;
+            const socket = {};
+            const map = {};
+            if (!this.overlay) return { misc, socket, map };
+
             this.overlay.querySelectorAll('[data-ps-filter]').forEach(cb => {
                 if (!cb.checked) return;
                 const key = cb.dataset.psFilter;
-                if (key === 'ilvl') {
-                    const val = parseInt(cb.dataset.psFilterVal);
-                    if (val > 0) misc.ilvl = { min: val };
-                } else if (FILTER_API_MAP[key]) {
-                    misc[FILTER_API_MAP[key]] = { option: 'true' };
-                }
+                const val = cb.dataset.psFilterVal ? parseInt(cb.dataset.psFilterVal) : 0;
+
+                if (key === 'ilvl' && val > 0)          misc.ilvl      = { min: val };
+                else if (key === 'quality' && val > 0)   misc.quality   = { min: val };
+                else if (key === 'gem_level' && val > 0) misc.gem_level = { min: val };
+                else if (key === 'links' && val > 0)     socket.links   = { min: val };
+                else if (key === 'map_tier' && val > 0)  map.map_tier   = { min: val };
+                else if (MISC_MAP[key])                  misc[MISC_MAP[key]] = { option: 'true' };
             });
-            return misc;
+            return { misc, socket, map };
         },
 
         async _submitPayload(payload, league, btn, resetLabel) {
