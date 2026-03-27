@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Poetent
 // @namespace    https://github.com/ShaneIsley/poetent
-// @version      0.4.2
+// @version      0.4.3
 // @description  Paste items from PoE to instantly search trade. Auto-detects harvest-swappable elemental stats and offers one-click count-group broadening. Pseudo stat uplift and defensive bundles. Foulborn mutation support.
 // @author       ShaneIsley
 // @match        https://www.pathofexile.com/trade/*
@@ -172,6 +172,7 @@
             pseudoUplift:  true,   // Collapse multiple mods into pseudo totals
             pseudoBroaden: false,  // Offer pseudo even for single mods (broader search)
             pseudoBundles: true,   // Offer defensive count-group bundles
+            searchStatus: 'securable', // Default status for paste-to-search (overridden by trade UI selection)
         },
         data: {},
 
@@ -1061,18 +1062,19 @@
             // Merge pseudo filters into the same "and" group
             const allFilters = [...statFilters, ...activePseudoFilters];
 
+            // Status: inherit from last trade UI search if available, else use setting
+            const searchStatus = _lastPayload?.query?.status?.option || Settings.data.searchStatus;
+
             const payload = {
                 query: {
-                    status: { option: 'online' },
+                    status: { option: searchStatus },
                     type: item.baseType,
                     stats: [{
                         type: 'and',
                         disabled: false,
                         filters: allFilters,
                     }],
-                    filters: {
-                        trade_filters: { disabled: false, filters: { sale_type: { option: 'priced' } } },
-                    },
+                    filters: {},
                 },
                 sort: { price: 'asc' },
             };
@@ -1110,9 +1112,11 @@
             bundleBtn.disabled = true;
             bundleBtn.textContent = 'Searching…';
 
+            const searchStatus = _lastPayload?.query?.status?.option || Settings.data.searchStatus;
+
             const payload = {
                 query: {
-                    status: { option: 'online' },
+                    status: { option: searchStatus },
                     type: item.baseType,
                     stats: [{
                         type: 'count',
@@ -1124,9 +1128,7 @@
                             value: { min: f.min },
                         })),
                     }],
-                    filters: {
-                        trade_filters: { disabled: false, filters: { sale_type: { option: 'priced' } } },
-                    },
+                    filters: {},
                 },
                 sort: { price: 'asc' },
             };
@@ -1351,6 +1353,7 @@
                 .hg-set-row{display:flex;align-items:center;gap:8px;font-size:13px;padding:3px 0}
                 .hg-set-row input[type=checkbox]{accent-color:#7fcc5a;width:14px;height:14px;cursor:pointer;flex-shrink:0}
                 .hg-set-row label{cursor:pointer;flex:1;color:#c8c8c8}
+                .hg-set-row select{background:#1a1a1e;border:1px solid #3a3a3a;color:#c8c8c8;padding:2px 6px;border-radius:3px;font-size:12px;font-family:inherit;cursor:pointer}
                 .hg-set-cache{display:flex;align-items:center;justify-content:space-between;padding:6px 0 2px}
                 .hg-set-cache-info{font-size:11px;color:#888}
                 .hg-set-cache-btn{background:#b71c1c;color:#ef9a9a;border:1px solid #e53e3e;border-radius:3px;padding:2px 8px;font-family:inherit;font-size:10px;cursor:pointer}
@@ -1626,6 +1629,16 @@
                     <label for="hg-set-${prefix}-pseudo-bundles">🎯 Defensive bundles</label>
                 </div>
                 <div class="hg-set-section">Behavior</div>
+                <div class="hg-set-row" title="Default listing filter for paste-to-search. Overridden by the trade site's own dropdown if you've done a search this session.">
+                    <label for="hg-set-${prefix}-status">Paste search status:</label>
+                    <select id="hg-set-${prefix}-status" data-hg-search-status>
+                        <option value="available"${Settings.data.searchStatus === 'available' ? ' selected' : ''}>Buyout + In Person</option>
+                        <option value="securable"${Settings.data.searchStatus === 'securable' ? ' selected' : ''}>Instant Buyout</option>
+                        <option value="onlineleague"${Settings.data.searchStatus === 'onlineleague' ? ' selected' : ''}>In Person (League)</option>
+                        <option value="online"${Settings.data.searchStatus === 'online' ? ' selected' : ''}>In Person (Online)</option>
+                        <option value="any"${Settings.data.searchStatus === 'any' ? ' selected' : ''}>Any</option>
+                    </select>
+                </div>
                 <div class="hg-set-row" title="Automatically submit grouped search when swappable stats are detected.">
                     <input type="checkbox" id="hg-set-${prefix}-auto" data-hg-auto ${Settings.data.autoApply ? 'checked' : ''}>
                     <label for="hg-set-${prefix}-auto">Auto-apply on search</label>
@@ -1649,6 +1662,7 @@
                 });
                 Settings.data.autoApply = container.querySelector('[data-hg-auto]').checked;
                 Settings.data.uiMode = container.querySelector('[data-hg-compact]').checked ? 'compact' : 'sidebar';
+                Settings.data.searchStatus = container.querySelector('[data-hg-search-status]').value;
                 // Pseudo settings
                 Settings.data.pseudoUplift  = container.querySelector('[data-hg-pseudo-uplift]').checked;
                 Settings.data.pseudoBroaden = container.querySelector('[data-hg-pseudo-broaden]').checked;
@@ -1682,6 +1696,7 @@
                 p.querySelectorAll('[data-hg-group-toggle]').forEach(cb => { cb.checked = Settings.isGroupEnabled(cb.dataset.hgGroupToggle); });
                 const a = p.querySelector('[data-hg-auto]'); if (a) a.checked = Settings.data.autoApply;
                 const c = p.querySelector('[data-hg-compact]'); if (c) c.checked = Settings.data.uiMode === 'compact';
+                const ss = p.querySelector('[data-hg-search-status]'); if (ss) ss.value = Settings.data.searchStatus;
                 const pu = p.querySelector('[data-hg-pseudo-uplift]');  if (pu) pu.checked = Settings.data.pseudoUplift;
                 const pb = p.querySelector('[data-hg-pseudo-broaden]'); if (pb) pb.checked = Settings.data.pseudoBroaden;
                 const pn = p.querySelector('[data-hg-pseudo-bundles]'); if (pn) pn.checked = Settings.data.pseudoBundles;
