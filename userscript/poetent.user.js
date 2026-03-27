@@ -1,14 +1,12 @@
 // ==UserScript==
 // @name         Poetent
 // @namespace    https://github.com/ShaneIsley/poetent
-// @version      0.4.3
+// @version      0.5.0
 // @description  Paste items from PoE to instantly search trade. Auto-detects harvest-swappable elemental stats and offers one-click count-group broadening. Pseudo stat uplift and defensive bundles. Foulborn mutation support.
 // @author       ShaneIsley
 // @match        https://www.pathofexile.com/trade/*
 // @icon         https://www.google.com/s2/favicons?sz=64&domain=pathofexile.com
 // @run-at       document-start
-// @connect      raw.githubusercontent.com
-// @grant        GM_xmlhttpRequest
 // @grant        GM_setValue
 // @grant        GM_getValue
 // @grant        GM_deleteValue
@@ -197,167 +195,12 @@
         },
     };
 
-    // =========================================================================
-    // GAME TEXT MATCHER — fetches awakened-poe-trade NDJSON (purpose-built
-    // for matching game client Ctrl+C text to trade stat IDs).
-    // This is the principled data source for paste-to-search matching.
-    // =========================================================================
-    const NDJSON_URL        = 'https://raw.githubusercontent.com/SnosMe/awakened-poe-trade/master/renderer/public/data/en/stats.ndjson';
-    const NDJSON_CACHE_KEY  = 'poetent_ndjson_stats_v1';
-    const NDJSON_CACHE_HOURS = 24;
-
     const escapeRegExp = (str) => str.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 
-    const fetchGM = (url) => new Promise((res, rej) =>
-        GM_xmlhttpRequest({
-            method: 'GET', url,
-            onload: r => r.status < 300 ? res(r.responseText) : rej(r.status),
-            onerror: rej,
-        })
-    );
-
-    const GameTextMatcher = {
-        patterns: [],   // { regex, ids: { explicit:[], implicit:[], ... }, value, raw }
-        prefixIndex: new Map(),
-        loaded: false,
-
-        async init() {
-            if (this.loaded) return;
-
-            let text = this._loadCache();
-            if (!text) {
-                try {
-                    text = await fetchGM(NDJSON_URL);
-                    this._saveCache(text);
-                } catch (e) {
-                    console.error('[Poetent] Failed to fetch NDJSON stats', e);
-                    return;
-                }
-            }
-
-            this._parse(text);
-            this.loaded = true;
-        },
-
-        _parse(text) {
-            this.patterns = [];
-
-            text.split('\n').forEach(line => {
-                if (!line) return;
-                try {
-                    const entry = JSON.parse(line);
-                    if (!entry.matchers || !entry.trade?.ids) return;
-
-                    entry.matchers.forEach(m => {
-                        let rx = escapeRegExp(m.string);
-                        rx = rx.replace(/\\\+/g, '\\+?');
-                        rx = rx.replace(/#/g, '([\\-\\+]?[\\d\\.]+)');
-                        rx = rx.replace(/\s/g, '\\s+');
-
-                        try {
-                            this.patterns.push({
-                                regex: new RegExp(`^${rx}$`, 'i'),
-                                ids: entry.trade.ids,
-                                value: m.value,
-                                raw: m.string,
-                            });
-                        } catch (e) { /* invalid regex — skip */ }
-                    });
-                } catch (e) {}
-            });
-
-            // Build prefix index for fast lookups (same technique as poecurer)
-            this.prefixIndex.clear();
-            this.patterns.forEach((p, idx) => {
-                const prefix = this._extractPrefix(p.raw);
-                if (prefix) {
-                    if (!this.prefixIndex.has(prefix)) this.prefixIndex.set(prefix, []);
-                    this.prefixIndex.get(prefix).push(idx);
-                }
-            });
-        },
-
-        _extractPrefix(str) {
-            const words = str.replace(/#/g, '').replace(/[+%]/g, '').trim().split(/\s+/);
-            for (const w of words) {
-                if (w.length > 1 && !/^\d+$/.test(w)) return w.toLowerCase();
-            }
-            return null;
-        },
-
-        /**
-         * Match game client mod text against NDJSON patterns.
-         * Returns { id, value, text, source } or null.
-         */
-        matchMod(modText, source) {
-            const prefix = this._extractPrefix(modText);
-
-            // Try indexed candidates first
-            if (prefix && this.prefixIndex.has(prefix)) {
-                for (const idx of this.prefixIndex.get(prefix)) {
-                    const result = this._tryPattern(this.patterns[idx], modText, source);
-                    if (result) return result;
-                }
-            }
-
-            // Full scan fallback
-            for (const p of this.patterns) {
-                const result = this._tryPattern(p, modText, source);
-                if (result) return result;
-            }
-
-            return null;
-        },
-
-        _tryPattern(p, modText, source) {
-            const m = modText.match(p.regex);
-            if (!m) return null;
-
-            // Select the correct stat ID based on source namespace
-            let id;
-            switch (source) {
-                case 'implicit': id = p.ids.implicit?.[0] || p.ids.explicit?.[0]; break;
-                case 'enchant':  id = p.ids.enchant?.[0]  || p.ids.implicit?.[0]; break;
-                case 'crafted':  id = p.ids.crafted?.[0]  || p.ids.explicit?.[0]; break;
-                default:         id = p.ids.explicit?.[0]  || p.ids.crafted?.[0]; break;
-            }
-            if (!id) return null;
-
-            // Value: use fixed value from matcher, or parse first capture group
-            let value = p.value;
-            if (value === undefined && m[1]) value = parseFloat(m[1]);
-
-            return {
-                id, value, text: p.raw, source,
-                values: Array.from(m).slice(1).map(Number),
-            };
-        },
-
-        _loadCache() {
-            try {
-                const raw = GM_getValue(NDJSON_CACHE_KEY);
-                if (!raw) return null;
-                const obj = JSON.parse(raw);
-                if ((Date.now() - obj.ts) / 36e5 > NDJSON_CACHE_HOURS) return null;
-                return obj.text;
-            } catch (e) { return null; }
-        },
-
-        _saveCache(text) {
-            try {
-                GM_setValue(NDJSON_CACHE_KEY, JSON.stringify({ ts: Date.now(), text }));
-            } catch (e) {}
-        },
-
-        clearCache() {
-            try { GM_deleteValue(NDJSON_CACHE_KEY); } catch (e) {}
-        },
-    };
-
     // =========================================================================
-    // STAT RESOLVER — fetches trade stat database for harvest swap-group
-    // lookups and pseudo stat resolution. Does NOT do game text matching
-    // (that's GameTextMatcher's job).
+    // STAT RESOLVER — fetches trade stat database, builds regex matchers for
+    // game text matching, harvest swap-group lookups, and pseudo stat resolution.
+    // Single data source: GGG's /api/trade/data/stats (100% coverage).
     // =========================================================================
     const STATS_CACHE_KEY   = 'poe_harvest_grouper_stats_v2';
     const STATS_CACHE_HOURS = 24;
@@ -367,6 +210,8 @@
         textToId: new Map(),          // "type|text" → id
         idToSwap: new Map(),          // id → { swap, elementIndex, templateKey }
         templateGroups: new Map(),    // "swap.id|templateKey" → [...]
+        patterns: [],                 // { regex, ids: { explicit:[], implicit:[], ... }, raw }
+        matcherIndex: new Map(),      // prefix word → [pattern indices]
         loaded: false,
 
         async init() {
@@ -423,13 +268,91 @@
                 }
             });
 
-            // Step 3: Initialize PseudoMapper (uses idToMeta for pseudo IDs)
+            // Step 3: Build regex matchers for game text matching (paste-to-search)
+            this._buildMatchers(data);
+
+            // Step 4: Initialize PseudoMapper (uses idToMeta for pseudo IDs)
             PseudoMapper.init();
         },
 
-        // Delegate game text matching to GameTextMatcher
+        // ── Matcher builder: converts trade API text templates to regexes ──
+        _buildMatchers(data) {
+            const MATCH_TYPES = new Set(['explicit', 'implicit', 'fractured', 'crafted', 'enchant']);
+            // Group entries by normalized text (strip "(Local)" so both variants share one matcher)
+            const groups = new Map();
+            (data.result || []).forEach(group => {
+                (group.entries || []).forEach(entry => {
+                    if (!MATCH_TYPES.has(entry.type)) return;
+                    const matchText = entry.text.replace(/\s*\(Local\)\s*$/, '');
+                    if (!groups.has(matchText)) groups.set(matchText, {});
+                    const g = groups.get(matchText);
+                    if (!g[entry.type]) g[entry.type] = [];
+                    g[entry.type].push(entry.id);
+                });
+            });
+
+            this.patterns = [];
+            groups.forEach((ids, text) => {
+                let rx = escapeRegExp(text);
+                rx = rx.replace(/\\\+/g, '\\+?');
+                rx = rx.replace(/#/g, '([\\-\\+]?[\\d\\.]+)');
+                rx = rx.replace(/\s/g, '\\s+');
+                try {
+                    this.patterns.push({ regex: new RegExp(`^${rx}$`, 'i'), ids, raw: text });
+                } catch (e) { /* invalid regex — skip */ }
+            });
+
+            // Build prefix index for fast lookups
+            this.matcherIndex = new Map();
+            this.patterns.forEach((p, idx) => {
+                const prefix = this._extractMatcherPrefix(p.raw);
+                if (prefix) {
+                    if (!this.matcherIndex.has(prefix)) this.matcherIndex.set(prefix, []);
+                    this.matcherIndex.get(prefix).push(idx);
+                }
+            });
+        },
+
+        _extractMatcherPrefix(str) {
+            const words = str.replace(/#/g, '').replace(/[+%]/g, '').trim().split(/\s+/);
+            for (const w of words) {
+                if (w.length > 1 && !/^\d+$/.test(w)) return w.toLowerCase();
+            }
+            return null;
+        },
+
+        // ── Game text matching: matches Ctrl+C mod text to trade stat IDs ──
         matchMod(modText, source) {
-            return GameTextMatcher.matchMod(modText, source);
+            const prefix = this._extractMatcherPrefix(modText);
+            // Try indexed candidates first
+            if (prefix && this.matcherIndex.has(prefix)) {
+                for (const idx of this.matcherIndex.get(prefix)) {
+                    const result = this._tryMatch(this.patterns[idx], modText, source);
+                    if (result) return result;
+                }
+            }
+            // Full scan fallback
+            for (const p of this.patterns) {
+                const result = this._tryMatch(p, modText, source);
+                if (result) return result;
+            }
+            return null;
+        },
+
+        _tryMatch(p, modText, source) {
+            const m = modText.match(p.regex);
+            if (!m) return null;
+            let id;
+            switch (source) {
+                case 'implicit': id = p.ids.implicit?.[0] || p.ids.explicit?.[0]; break;
+                case 'enchant':  id = p.ids.enchant?.[0]  || p.ids.implicit?.[0]; break;
+                case 'crafted':  id = p.ids.crafted?.[0]  || p.ids.explicit?.[0]; break;
+                default:         id = p.ids.explicit?.[0]  || p.ids.crafted?.[0]; break;
+            }
+            if (!id) return null;
+            let value;
+            if (m[1]) value = parseFloat(m[1]);
+            return { id, value, text: p.raw, source, values: Array.from(m).slice(1).map(Number) };
         },
 
         getSwapInfo(statId) {
@@ -642,6 +565,8 @@
             let fractured = false;
             let synthesised = false;
             let mutated = false;
+            let mirrored = false;
+            const influences = [];
 
             const skipRx = /^(Requirements:|Item Level:|Sockets:|Quality|Level:|Note:|Unmodifiable)/;
             // Property lines — these are base item stats, not mods
@@ -680,7 +605,12 @@
                 if (first === 'Fractured Item') { fractured = true; continue; }
                 if (first === 'Synthesised Item') { synthesised = true; continue; }
                 if (first === 'Mutated') { mutated = true; continue; }
-                if (first === 'Mirrored') continue;
+                if (first === 'Mirrored') { mirrored = true; continue; }
+
+                // Influence flags
+                const influenceMap = { 'Shaper Item':'shaper', 'Elder Item':'elder', 'Crusader Item':'crusader', 'Redeemer Item':'redeemer', 'Hunter Item':'hunter', 'Warlord Item':'warlord' };
+                if (influenceMap[first]) { influences.push(influenceMap[first]); continue; }
+
                 if (first.startsWith('Note:')) continue;
 
                 // Skip flavor text sections
@@ -702,13 +632,17 @@
                 for (const line of mergedLines) {
                     const trimmed = line.trim();
                     if (!trimmed || trimmed.startsWith('Note:')) continue;
-                    if (trimmed === 'Corrupted' || trimmed === 'Fractured Item' || trimmed === 'Synthesised Item' || trimmed === 'Mutated') {
+                    if (trimmed === 'Corrupted' || trimmed === 'Fractured Item' || trimmed === 'Synthesised Item' || trimmed === 'Mutated' || trimmed === 'Mirrored') {
                         if (trimmed === 'Corrupted') corrupted = true;
                         if (trimmed === 'Fractured Item') fractured = true;
                         if (trimmed === 'Synthesised Item') synthesised = true;
                         if (trimmed === 'Mutated') mutated = true;
+                        if (trimmed === 'Mirrored') mirrored = true;
                         continue;
                     }
+                    // Influence flags (inner fallback)
+                    const innerInfluence = { 'Shaper Item':'shaper', 'Elder Item':'elder', 'Crusader Item':'crusader', 'Redeemer Item':'redeemer', 'Hunter Item':'hunter', 'Warlord Item':'warlord' }[trimmed];
+                    if (innerInfluence) { if (!influences.includes(innerInfluence)) influences.push(innerInfluence); continue; }
 
                     // Skip individual property lines that appear in mixed sections
                     if (propRx.test(trimmed)) continue;
@@ -737,7 +671,10 @@
 
             if (!baseType && !name) return null;
 
-            return { rarity, name, baseType, itemClass, mods, ilvl, corrupted, fractured, synthesised, mutated };
+            // Replica uniques: game client shows "Replica <Name>" with no separate flag
+            const replica = (rarity === 'Unique' && name.startsWith('Replica '));
+
+            return { rarity, name, baseType, itemClass, mods, ilvl, corrupted, fractured, synthesised, mutated, mirrored, replica, influences };
         },
     };
 
@@ -757,7 +694,7 @@
         init() {},
 
         open() {
-            if (!StatResolver.loaded || !GameTextMatcher.loaded) return;
+            if (!StatResolver.loaded) return;
             this._league = detectLeague();
             this._createOverlay();
             this.overlay.style.display = 'flex';
@@ -897,13 +834,38 @@
                     ${subLine ? `<div class="ps-item-base">${esc(subLine)}</div>` : ''}
                     <div class="ps-item-meta">
                         ${item.ilvl ? `iLvl ${item.ilvl}` : ''}
-                        ${item.corrupted ? ' · <span style="color:#d44">Corrupted</span>' : ''}
-                        ${item.fractured ? ' · <span style="color:#a16207">Fractured</span>' : ''}
-                        ${item.synthesised ? ' · <span style="color:#6d28d9">Synthesised</span>' : ''}
-                        ${item.mutated ? ' · <span style="color:#7fcc5a">Mutated</span>' : ''}
+                        ${item.rarity !== 'Normal' && item.rarity !== 'Rare' ? '' : ''}
                     </div>
                 </div>
             `;
+
+            // ── Search filters (detected metadata, toggleable) ──
+            const filters = [];
+            if (item.corrupted)   filters.push({ key:'corrupted',   label:'Corrupted',   color:'#d44',    on:true  });
+            if (item.fractured)   filters.push({ key:'fractured',   label:'Fractured',   color:'#a16207', on:true  });
+            if (item.synthesised) filters.push({ key:'synthesised', label:'Synthesised', color:'#6d28d9', on:true  });
+            if (item.replica)     filters.push({ key:'replica',     label:'Replica',     color:'#0ea5e9', on:true  });
+            if (item.mirrored)    filters.push({ key:'mirrored',    label:'Mirrored',    color:'#4338ca', on:false });
+            if (item.mutated)     filters.push({ key:'mutated',     label:'Mutated',     color:'#7fcc5a', on:false, info:true });
+            if (item.ilvl > 0 && item.rarity !== 'Unique')
+                                  filters.push({ key:'ilvl',        label:`iLvl ≥ ${item.ilvl}`, color:'#aaa', on:false, val:item.ilvl });
+            item.influences.forEach(inf => {
+                const name = inf.charAt(0).toUpperCase() + inf.slice(1);
+                filters.push({ key:inf, label:name, color:'#6ba3d6', on:false });
+            });
+
+            if (filters.length > 0) {
+                html += '<div class="ps-filter-section"><div class="ps-filter-header">Search Filters</div><div class="ps-filter-list">';
+                filters.forEach(f => {
+                    if (f.info) {
+                        // Display-only (no trade API filter exists)
+                        html += `<span class="ps-filter-row ps-filter-info"><span style="color:${f.color}">${esc(f.label)}</span></span>`;
+                    } else {
+                        html += `<label class="ps-filter-row"><input type="checkbox" ${f.on ? 'checked' : ''} data-ps-filter="${f.key}"${f.val !== undefined ? ` data-ps-filter-val="${f.val}"` : ''}><span style="color:${f.color}">${esc(f.label)}</span></label>`;
+                    }
+                });
+                html += '</div></div>';
+            }
 
             // ── Matched mods ──
             if (matched.length > 0) {
@@ -1088,10 +1050,8 @@
                 payload.query.name = tradeName;
             }
 
-            const misc = {};
-            if (item.corrupted)   misc.corrupted       = { option: 'true' };
-            if (item.fractured)   misc.fractured_item   = { option: 'true' };
-            if (item.synthesised) misc.synthesised_item  = { option: 'true' };
+            // Build misc_filters from checked filter checkboxes
+            const misc = this._buildMiscFilters();
             if (Object.keys(misc).length) {
                 payload.query.filters.misc_filters = { filters: misc };
             }
@@ -1141,7 +1101,42 @@
                 payload.query.name = tradeName;
             }
 
+            const misc = this._buildMiscFilters();
+            if (Object.keys(misc).length) {
+                payload.query.filters.misc_filters = { filters: misc };
+            }
+
             await this._submitPayload(payload, league, bundleBtn, '🎯 Search Defensive Bundle');
+        },
+
+        // Read checked filter checkboxes from the paste modal and build misc_filters object
+        _buildMiscFilters() {
+            const FILTER_API_MAP = {
+                corrupted:   'corrupted',
+                fractured:   'fractured_item',
+                synthesised: 'synthesised_item',
+                replica:     'alternate_art',
+                mirrored:    'mirrored',
+                shaper:      'shaper_item',
+                elder:       'elder_item',
+                crusader:    'crusader_item',
+                redeemer:    'redeemer_item',
+                hunter:      'hunter_item',
+                warlord:     'warlord_item',
+            };
+            const misc = {};
+            if (!this.overlay) return misc;
+            this.overlay.querySelectorAll('[data-ps-filter]').forEach(cb => {
+                if (!cb.checked) return;
+                const key = cb.dataset.psFilter;
+                if (key === 'ilvl') {
+                    const val = parseInt(cb.dataset.psFilterVal);
+                    if (val > 0) misc.ilvl = { min: val };
+                } else if (FILTER_API_MAP[key]) {
+                    misc[FILTER_API_MAP[key]] = { option: 'true' };
+                }
+            });
+            return misc;
         },
 
         async _submitPayload(payload, league, btn, resetLabel) {
@@ -1430,6 +1425,14 @@
                 .ps-search-btn:disabled{background:#333;border-color:#555;color:#777;cursor:not-allowed}
 
                 /* ── Pseudo section in paste modal ── */
+                .ps-filter-section{border-top:1px solid #2a2a2e;padding-top:6px;margin-top:4px}
+                .ps-filter-header{font-size:10px;color:#666;text-transform:uppercase;letter-spacing:.5px;padding:0 0 4px;font-weight:bold}
+                .ps-filter-list{display:flex;flex-wrap:wrap;gap:2px 8px}
+                .ps-filter-row{display:flex;align-items:center;gap:5px;padding:2px 6px;border-radius:3px;font-size:11px;color:#c8c8c8;cursor:pointer;white-space:nowrap}
+                .ps-filter-row:hover{background:#1a1a1e}
+                .ps-filter-row input[type=checkbox]{accent-color:#7fcc5a;width:12px;height:12px;cursor:pointer;flex-shrink:0}
+                .ps-filter-row.ps-filter-info{opacity:.6;cursor:default}
+                .ps-filter-row.ps-filter-info:hover{background:none}
                 .ps-pseudo-section{border-top:1px solid #2a2a2e;padding-top:6px;margin-top:4px}
                 .ps-pseudo-header{font-size:10px;color:#b8860b;text-transform:uppercase;letter-spacing:.5px;padding:0 0 4px;font-weight:bold}
                 .ps-pseudo-row{display:flex;align-items:center;gap:6px;padding:4px 6px;border-radius:3px;font-size:12px;color:#c8c8c8;cursor:pointer;border:1px solid transparent;transition:border-color .15s}
@@ -1686,7 +1689,6 @@
 
             container.querySelector('[data-hg-cache-clear]').addEventListener('click', () => {
                 StatResolver.clearCache();
-                GameTextMatcher.clearCache();
                 document.querySelectorAll('[data-hg-cache-info]').forEach(el => { el.textContent = 'Cache: cleared!'; });
             });
         },
@@ -2062,9 +2064,6 @@
             if (_lastPayload) Sidebar.analyze(_lastPayload, _lastLeague);
             if (!_lastPayload) Sidebar.panel.querySelector('.hg-status').textContent = 'Click Search to detect stats.';
         });
-
-        // Fetch NDJSON for paste-to-search (parallel with trade API)
-        GameTextMatcher.init();
 
         let lastUrl = window.location.href;
         new MutationObserver(() => {
