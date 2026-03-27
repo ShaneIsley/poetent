@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Poetent
 // @namespace    https://github.com/ShaneIsley/poetent
-// @version      0.5.0
+// @version      0.5.1
 // @description  Paste items from PoE to instantly search trade. Auto-detects harvest-swappable elemental stats and offers one-click count-group broadening. Pseudo stat uplift and defensive bundles. Foulborn mutation support.
 // @author       ShaneIsley
 // @match        https://www.pathofexile.com/trade/*
@@ -277,7 +277,7 @@
 
         // ── Matcher builder: converts trade API text templates to regexes ──
         _buildMatchers(data) {
-            const MATCH_TYPES = new Set(['explicit', 'implicit', 'fractured', 'crafted', 'enchant']);
+            const MATCH_TYPES = new Set(['explicit', 'implicit', 'fractured', 'crafted', 'enchant', 'imbued']);
             // Group entries by normalized text (strip "(Local)" so both variants share one matcher)
             const groups = new Map();
             (data.result || []).forEach(group => {
@@ -347,7 +347,7 @@
                 case 'implicit': id = p.ids.implicit?.[0] || p.ids.explicit?.[0]; break;
                 case 'enchant':  id = p.ids.enchant?.[0]  || p.ids.implicit?.[0]; break;
                 case 'crafted':  id = p.ids.crafted?.[0]  || p.ids.explicit?.[0]; break;
-                default:         id = p.ids.explicit?.[0]  || p.ids.crafted?.[0]; break;
+                default:         id = p.ids.explicit?.[0]  || p.ids.crafted?.[0] || p.ids.imbued?.[0]; break;
             }
             if (!id) return null;
             let value;
