@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Poetent
 // @namespace    https://github.com/ShaneIsley/poetent
-// @version      0.5.2
+// @version      0.6.0
 // @description  Paste items from PoE to instantly search trade. Auto-detects harvest-swappable elemental stats and offers one-click count-group broadening. Pseudo stat uplift and defensive bundles. Foulborn mutation support.
 // @author       ShaneIsley
 // @match        https://www.pathofexile.com/trade/*
@@ -573,6 +573,8 @@
             let links = 0;
             let gemLevel = 0;
             let mapTier = 0;
+            let armour = 0, evasion = 0, energyShield = 0, ward = 0, block = 0;
+            let physDamage = '', eleDamage = '', aps = 0, critChance = 0;
 
             const skipRx = /^(Requirements:|Item Level:|Note:|Unmodifiable)/;
             // Property lines — these are base item stats, not mods
@@ -607,8 +609,16 @@
                     if (t.startsWith('Quality:'))  quality  = parseInt(t.replace(/[^0-9]/g, '')) || 0;
                     if (t.startsWith('Level:') && !t.startsWith('Level Requirement')) gemLevel = parseInt(t.split(':')[1]) || 0;
                     if (t.startsWith('Map Tier:')) mapTier  = parseInt(t.split(':')[1]) || 0;
+                    if (t.startsWith('Armour:'))   armour   = parseInt(t.split(':')[1]) || 0;
+                    if (t.startsWith('Evasion Rating:') || t.startsWith('Evasion:')) evasion = parseInt(t.split(':')[1]) || 0;
+                    if (t.startsWith('Energy Shield:')) energyShield = parseInt(t.split(':')[1]) || 0;
+                    if (t.startsWith('Ward:'))     ward     = parseInt(t.split(':')[1]) || 0;
+                    if (t.startsWith('Chance to Block:') || t.startsWith('Block Chance:')) block = parseInt(t.replace(/[^0-9]/g, '')) || 0;
+                    if (t.startsWith('Attacks per Second:')) aps = parseFloat(t.split(':')[1]) || 0;
+                    if (t.startsWith('Critical Strike Chance:')) critChance = parseFloat(t.replace(/[^0-9.]/g, '')) || 0;
+                    if (t.startsWith('Physical Damage:')) physDamage = t.split(':')[1].trim();
+                    if (t.startsWith('Elemental Damage:')) eleDamage = t.split(':')[1].trim();
                     if (t.startsWith('Sockets:')) {
-                        // Parse link groups: "B-B-R G" → groups of linked sockets
                         const socketStr = t.split(':')[1].trim();
                         const groups = socketStr.split(/\s+/);
                         let maxGroup = 0;
@@ -699,7 +709,7 @@
             // Replica uniques: game client shows "Replica <Name>" with no separate flag
             const replica = (rarity === 'Unique' && name.startsWith('Replica '));
 
-            return { rarity, name, baseType, itemClass, mods, ilvl, corrupted, fractured, synthesised, mutated, mirrored, replica, influences, quality, links, gemLevel, mapTier };
+            return { rarity, name, baseType, itemClass, mods, ilvl, corrupted, fractured, synthesised, mutated, mirrored, replica, influences, quality, links, gemLevel, mapTier, armour, evasion, energyShield, ward, block, physDamage, eleDamage, aps, critChance };
         },
     };
 
@@ -859,47 +869,18 @@
                     ${subLine ? `<div class="ps-item-base">${esc(subLine)}</div>` : ''}
                     <div class="ps-item-meta">
                         ${item.ilvl ? `iLvl ${item.ilvl}` : ''}
-                        ${item.rarity !== 'Normal' && item.rarity !== 'Rare' ? '' : ''}
+                        ${item.corrupted ? ' · <span style="color:#d44">Corrupted</span>' : ''}
+                        ${item.fractured ? ' · <span style="color:#a16207">Fractured</span>' : ''}
+                        ${item.synthesised ? ' · <span style="color:#6d28d9">Synthesised</span>' : ''}
+                        ${item.mutated ? ' · <span style="color:#7fcc5a">Mutated</span>' : ''}
+                        ${item.mirrored ? ' · <span style="color:#4338ca">Mirrored</span>' : ''}
+                        ${item.replica ? ' · <span style="color:#0ea5e9">Replica</span>' : ''}
+                        ${item.influences.length ? ' · <span style="color:#6ba3d6">' + item.influences.map(i => i.charAt(0).toUpperCase() + i.slice(1)).join(', ') + '</span>' : ''}
+                        ${item.quality > 0 ? ` · Q${item.quality}%` : ''}
+                        ${item.links >= 5 ? ` · ${item.links}L` : ''}
                     </div>
                 </div>
             `;
-
-            // ── Search filters (detected metadata, all OFF by default — user opts in to constrain) ──
-            const filters = [];
-            if (item.corrupted)   filters.push({ key:'corrupted',   label:'Corrupted',   color:'#d44',    on:false });
-            if (item.fractured)   filters.push({ key:'fractured',   label:'Fractured',   color:'#a16207', on:false });
-            if (item.synthesised) filters.push({ key:'synthesised', label:'Synthesised', color:'#6d28d9', on:false });
-            if (item.replica)     filters.push({ key:'replica',     label:'Replica',     color:'#0ea5e9', on:false });
-            if (item.mirrored)    filters.push({ key:'mirrored',    label:'Mirrored',    color:'#4338ca', on:false });
-            if (item.mutated)     filters.push({ key:'mutated',     label:'Mutated',     color:'#7fcc5a', on:false, info:true });
-            if (item.ilvl > 0 && item.rarity !== 'Unique')
-                                  filters.push({ key:'ilvl',        label:`iLvl ≥ ${item.ilvl}`, color:'#aaa', on:false, val:item.ilvl });
-            item.influences.forEach(inf => {
-                const name = inf.charAt(0).toUpperCase() + inf.slice(1);
-                filters.push({ key:inf, label:name, color:'#6ba3d6', on:false });
-            });
-            // Property-based filters
-            if (item.quality > 0)
-                filters.push({ key:'quality', label:`Quality ≥ ${item.quality}%`, color:'#aaa', on:false, val:item.quality });
-            if (item.links >= 5)
-                filters.push({ key:'links', label:`${item.links}L`, color:'#065f46', on:false, val:item.links });
-            if (item.gemLevel > 0)
-                filters.push({ key:'gem_level', label:`Gem Lvl ≥ ${item.gemLevel}`, color:'#1ba29b', on:false, val:item.gemLevel });
-            if (item.mapTier > 0)
-                filters.push({ key:'map_tier', label:`Tier ${item.mapTier}`, color:'#c8c8c8', on:false, val:item.mapTier });
-
-            if (filters.length > 0) {
-                html += '<div class="ps-filter-section"><div class="ps-filter-header">Search Filters</div><div class="ps-filter-list">';
-                filters.forEach(f => {
-                    if (f.info) {
-                        // Display-only (no trade API filter exists)
-                        html += `<span class="ps-filter-row ps-filter-info"><span style="color:${f.color}">${esc(f.label)}</span></span>`;
-                    } else {
-                        html += `<label class="ps-filter-row"><input type="checkbox" ${f.on ? 'checked' : ''} data-ps-filter="${f.key}"${f.val !== undefined ? ` data-ps-filter-val="${f.val}"` : ''}><span style="color:${f.color}">${esc(f.label)}</span></label>`;
-                    }
-                });
-                html += '</div></div>';
-            }
 
             // ── Matched mods ──
             if (matched.length > 0) {
@@ -1070,7 +1051,7 @@
                         disabled: false,
                         filters: allFilters,
                     }],
-                    filters: {},
+                    filters: this._buildDisabledFilters(item),
                 },
                 sort: { price: 'asc' },
             };
@@ -1083,12 +1064,6 @@
                 }
                 payload.query.name = tradeName;
             }
-
-            // Build filters from checked checkboxes
-            const { misc, socket, map } = this._buildCheckedFilters();
-            if (Object.keys(misc).length)   payload.query.filters.misc_filters   = { filters: misc };
-            if (Object.keys(socket).length) payload.query.filters.socket_filters = { filters: socket };
-            if (Object.keys(map).length)    payload.query.filters.map_filters    = { filters: map };
 
             await this._submitPayload(payload, league, searchBtn, '🔍 Search Trade');
         },
@@ -1122,7 +1097,7 @@
                             value: { min: f.min },
                         })),
                     }],
-                    filters: {},
+                    filters: this._buildDisabledFilters(item),
                 },
                 sort: { price: 'asc' },
             };
@@ -1135,47 +1110,75 @@
                 payload.query.name = tradeName;
             }
 
-            const { misc, socket, map } = this._buildCheckedFilters();
-            if (Object.keys(misc).length)   payload.query.filters.misc_filters   = { filters: misc };
-            if (Object.keys(socket).length) payload.query.filters.socket_filters = { filters: socket };
-            if (Object.keys(map).length)    payload.query.filters.map_filters    = { filters: map };
-
             await this._submitPayload(payload, league, bundleBtn, '🎯 Search Defensive Bundle');
         },
 
-        // Read checked filter checkboxes from the paste modal and build filter objects for the payload
-        _buildCheckedFilters() {
-            const MISC_MAP = {
-                corrupted:   'corrupted',
-                fractured:   'fractured_item',
-                synthesised: 'synthesised_item',
-                replica:     'alternate_art',
-                mirrored:    'mirrored',
-                shaper:      'shaper_item',
-                elder:       'elder_item',
-                crusader:    'crusader_item',
-                redeemer:    'redeemer_item',
-                hunter:      'hunter_item',
-                warlord:     'warlord_item',
-            };
+        // Build all filter groups as disabled from parsed item data.
+        // Values are pre-filled so the trade site renders them in the native UI,
+        // but they don't constrain the search until the user enables a section.
+        _buildDisabledFilters(item) {
+            const filters = {};
+
+            // ── Type filters (rarity) ──
+            const typeF = {};
+            if (item.rarity === 'Unique')      typeF.rarity = { option: 'unique' };
+            else if (item.rarity === 'Rare')   typeF.rarity = { option: 'nonunique' };
+            else if (item.rarity === 'Magic')  typeF.rarity = { option: 'magic' };
+            else if (item.rarity === 'Normal') typeF.rarity = { option: 'normal' };
+            if (Object.keys(typeF).length) filters.type_filters = { disabled: true, filters: typeF };
+
+            // ── Misc filters (boolean flags, ilvl, quality, gem level) ──
             const misc = {};
-            const socket = {};
-            const map = {};
-            if (!this.overlay) return { misc, socket, map };
+            if (item.corrupted)   misc.corrupted       = { option: 'true' };
+            if (item.fractured)   misc.fractured_item   = { option: 'true' };
+            if (item.synthesised) misc.synthesised_item  = { option: 'true' };
+            if (item.replica)     misc.alternate_art     = { option: 'true' };
+            if (item.mirrored)    misc.mirrored          = { option: 'true' };
+            if (item.ilvl > 0 && item.rarity !== 'Unique') misc.ilvl = { min: item.ilvl };
+            if (item.quality > 0) misc.quality = { min: item.quality };
+            if (item.gemLevel > 0) misc.gem_level = { min: item.gemLevel };
+            // Influences
+            item.influences.forEach(inf => { misc[inf + '_item'] = { option: 'true' }; });
+            if (Object.keys(misc).length) filters.misc_filters = { disabled: true, filters: misc };
 
-            this.overlay.querySelectorAll('[data-ps-filter]').forEach(cb => {
-                if (!cb.checked) return;
-                const key = cb.dataset.psFilter;
-                const val = cb.dataset.psFilterVal ? parseInt(cb.dataset.psFilterVal) : 0;
+            // ── Armour filters ──
+            const armF = {};
+            if (item.armour > 0)       armF.ar = { min: item.armour };
+            if (item.evasion > 0)      armF.ev = { min: item.evasion };
+            if (item.energyShield > 0) armF.es = { min: item.energyShield };
+            if (item.ward > 0)         armF.ward = { min: item.ward };
+            if (item.block > 0)        armF.block = { min: item.block };
+            if (Object.keys(armF).length) filters.armour_filters = { disabled: true, filters: armF };
 
-                if (key === 'ilvl' && val > 0)          misc.ilvl      = { min: val };
-                else if (key === 'quality' && val > 0)   misc.quality   = { min: val };
-                else if (key === 'gem_level' && val > 0) misc.gem_level = { min: val };
-                else if (key === 'links' && val > 0)     socket.links   = { min: val };
-                else if (key === 'map_tier' && val > 0)  map.map_tier   = { min: val };
-                else if (MISC_MAP[key])                  misc[MISC_MAP[key]] = { option: 'true' };
-            });
-            return { misc, socket, map };
+            // ── Weapon filters ──
+            const weapF = {};
+            if (item.physDamage) {
+                const parts = item.physDamage.split('-').map(s => parseFloat(s.trim()));
+                if (parts.length === 2) {
+                    const pdps = ((parts[0] + parts[1]) / 2) * (item.aps || 1);
+                    if (pdps > 0) weapF.pdps = { min: Math.floor(pdps) };
+                }
+            }
+            if (item.eleDamage) {
+                const nums = item.eleDamage.match(/(\d+)-(\d+)/g);
+                if (nums) {
+                    let eTotal = 0;
+                    nums.forEach(n => { const p = n.split('-'); eTotal += (parseFloat(p[0]) + parseFloat(p[1])) / 2; });
+                    const edps = eTotal * (item.aps || 1);
+                    if (edps > 0) weapF.edps = { min: Math.floor(edps) };
+                }
+            }
+            if (item.aps > 0)        weapF.aps = { min: item.aps };
+            if (item.critChance > 0)  weapF.crit = { min: item.critChance };
+            if (Object.keys(weapF).length) filters.weapon_filters = { disabled: true, filters: weapF };
+
+            // ── Socket filters ──
+            if (item.links >= 5) filters.socket_filters = { disabled: true, filters: { links: { min: item.links } } };
+
+            // ── Map filters ──
+            if (item.mapTier > 0) filters.map_filters = { disabled: true, filters: { map_tier: { min: item.mapTier } } };
+
+            return filters;
         },
 
         async _submitPayload(payload, league, btn, resetLabel) {
@@ -1464,14 +1467,6 @@
                 .ps-search-btn:disabled{background:#333;border-color:#555;color:#777;cursor:not-allowed}
 
                 /* ── Pseudo section in paste modal ── */
-                .ps-filter-section{border-top:1px solid #2a2a2e;padding-top:6px;margin-top:4px}
-                .ps-filter-header{font-size:10px;color:#666;text-transform:uppercase;letter-spacing:.5px;padding:0 0 4px;font-weight:bold}
-                .ps-filter-list{display:flex;flex-wrap:wrap;gap:2px 8px}
-                .ps-filter-row{display:flex;align-items:center;gap:5px;padding:2px 6px;border-radius:3px;font-size:11px;color:#c8c8c8;cursor:pointer;white-space:nowrap}
-                .ps-filter-row:hover{background:#1a1a1e}
-                .ps-filter-row input[type=checkbox]{accent-color:#7fcc5a;width:12px;height:12px;cursor:pointer;flex-shrink:0}
-                .ps-filter-row.ps-filter-info{opacity:.6;cursor:default}
-                .ps-filter-row.ps-filter-info:hover{background:none}
                 .ps-pseudo-section{border-top:1px solid #2a2a2e;padding-top:6px;margin-top:4px}
                 .ps-pseudo-header{font-size:10px;color:#b8860b;text-transform:uppercase;letter-spacing:.5px;padding:0 0 4px;font-weight:bold}
                 .ps-pseudo-row{display:flex;align-items:center;gap:6px;padding:4px 6px;border-radius:3px;font-size:12px;color:#c8c8c8;cursor:pointer;border:1px solid transparent;transition:border-color .15s}
