@@ -22,6 +22,12 @@ jobs:
         with:
           python-version: '3.12'
 
+      - name: Install test dependencies
+        run: pip install pytest
+
+      - name: Run bridge generator tests
+        run: python -m pytest tests/test_bridge.py -v
+
       - name: Generate bridge file
         run: |
           python data/scripts/generate_bridge.py --output data/poe_trade_bridge.json
@@ -36,7 +42,7 @@ jobs:
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git add data/poe_trade_bridge.json data/poe_trade_bridge.pretty.json
-          STAT_COUNT=$(python -c "import json; print(len(json.load(open('data/poe_trade_bridge.json'))))")
-          git commit -m "chore: regenerate trade bridge (${STAT_COUNT} stats)"
+          git add data/poe_trade_bridge.json data/poe_trade_bridge.pretty.json data/poe_item_class_tags.json
+          STAT_COUNT=$(python -c "import json; d=json.load(open('data/poe_trade_bridge.json')); print(f'{len(d)} stats, {sum(len(v[\"tiers_by_tag\"]) for v in d.values())} tag groups')")
+          git commit -m "chore: regenerate trade bridge (${STAT_COUNT})"
           git push
